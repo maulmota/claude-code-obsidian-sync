@@ -1,0 +1,258 @@
+#!/bin/bash
+# claude-sync: Sync Claude Code config across devices via Obsidian
+# https://github.com/motapod/claude-code-obsidian-sync
+#
+# What it does:
+#   1. Converts any real .claude/ directories to _claude/ + symlink
+#   2. Creates .claude -> _claude symlinks for directories synced from other devices
+#   3. Ensures commands/ and memory/ subdirectories exist
+#   4. Sets up memory symlinks so auto-memory writes into the vault
+
+set -euo pipefail
+
+VERSION="1.0.0"
+CONFIG_DIR="$HOME/.config/claude-sync"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+# --- Helpers ---
+
+usage() {
+  cat <<EOF
+claude-sync $VERSION — Sync Claude Code config across devices via Obsidian
+
+Usage:
+  claude-sync              Sync vault (uses configured path)
+  claude-sync init         Interactive setup (vault path + Stop hook)
+  claude-sync --vault PATH Sync a specific vault path
+  claude-sync --help       Show this help
+  claude-sync --version    Show version
+
+Config: $CONFIG_FILE
+EOF
+}
+
+log() {
+  # Suppress per-item output when running non-interactively (e.g. as a hook)
+  if [ -t 1 ]; then
+    echo "$1"
+  fi
+}
+
+load_vault_path() {
+  if [ -n "${VAULT:-}" ]; then
+    return
+  fi
+
+  if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+    VAULT="${VAULT_PATH:-}"
+  fi
+
+  if [ -z "${VAULT:-}" ]; then
+    echo "[claude-sync] Error: No vault path configured." >&2
+    echo "Run 'claude-sync init' to set up, or use 'claude-sync --vault PATH'." >&2
+    exit 1
+  fi
+}
+
+# --- Init subcommand ---
+
+do_init() {
+  echo "claude-sync $VERSION — Setup"
+  echo ""
+
+  # Prompt for vault path
+  local default_vault="$HOME/Documents"
+  if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    default_vault="${VAULT_PATH:-$default_vault}"
+  fi
+
+  read -r -p "Obsidian vault path [$default_vault]: " input_vault
+  local vault_path="${input_vault:-$default_vault}"
+
+  # Expand ~ if present
+  vault_path="${vault_path/#\~/$HOME}"
+
+  if [ ! -d "$vault_path" ]; then
+    echo "Error: '$vault_path' is not a directory." >&2
+    exit 1
+  fi
+
+  # Write config
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG_FILE" <<EOF
+# claude-sync configuration
+VAULT_PATH="$vault_path"
+EOF
+  echo "Config saved to $CONFIG_FILE"
+
+  # Offer to install Stop hook
+  echo ""
+  read -r -p "Install Claude Code Stop hook? (runs claude-sync automatically) [Y/n]: " install_hook
+  install_hook="${install_hook:-Y}"
+
+  if [[ "$install_hook" =~ ^[Yy] ]]; then
+    install_stop_hook
+  fi
+
+  # Run first sync
+  echo ""
+  echo "Running initial sync..."
+  VAULT="$vault_path"
+  do_sync
+}
+
+install_stop_hook() {
+  local settings_file="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+
+  if ! command -v jq &>/dev/null; then
+    echo "Warning: jq not found. Please add the Stop hook manually to $settings_file:" >&2
+    echo '  "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "claude-sync" }] }] }' >&2
+    return
+  fi
+
+  local hook_command="claude-sync"
+
+  if [ -f "$settings_file" ]; then
+    # Check if hook already exists
+    if jq -e '.hooks.Stop[]?.hooks[]? | select(.command == "claude-sync")' "$settings_file" &>/dev/null; then
+      echo "Stop hook already installed."
+      return
+    fi
+
+    # Add hook to existing settings
+    local tmp
+    tmp=$(mktemp)
+    jq --arg cmd "$hook_command" '
+      .hooks //= {} |
+      .hooks.Stop //= [] |
+      .hooks.Stop += [{"hooks": [{"type": "command", "command": $cmd}]}]
+    ' "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
+  else
+    # Create new settings file
+    jq -n --arg cmd "$hook_command" '{
+      hooks: {
+        Stop: [{ hooks: [{ type: "command", command: $cmd }] }]
+      }
+    }' > "$settings_file"
+  fi
+
+  echo "Stop hook installed in $settings_file"
+}
+
+# --- Sync logic ---
+
+do_sync() {
+  if [ ! -d "$VAULT" ]; then
+    echo "[claude-sync] Error: $VAULT is not a directory" >&2
+    exit 1
+  fi
+
+  local convert_count=0
+  local link_count=0
+  local mem_count=0
+
+  # Step 1: Convert any real .claude/ directories to _claude/ + symlink
+  while IFS= read -r -d '' dot_claude; do
+    local parent
+    parent="$(dirname "$dot_claude")"
+    if [ -d "$parent/_claude" ]; then
+      cp -rn "$dot_claude"/* "$parent/_claude/" 2>/dev/null || true
+      rm -rf "$dot_claude"
+      ln -s _claude "$dot_claude"
+      log "  [merged] $parent/.claude -> _claude"
+    else
+      mv "$dot_claude" "$parent/_claude"
+      ln -s _claude "$dot_claude"
+      log "  [converted] $parent/.claude -> _claude"
+    fi
+    mkdir -p "$parent/_claude/commands" "$parent/_claude/memory"
+    ((convert_count++))
+  done < <(find "$VAULT" -name ".claude" -type d -not -path "*/.obsidian/*" -print0 2>/dev/null)
+
+  # Step 2: Create .claude -> _claude symlinks and memory symlinks
+  while IFS= read -r -d '' claude_dir; do
+    local parent
+    parent="$(dirname "$claude_dir")"
+
+    # Config symlink
+    if [ -L "$parent/.claude" ]; then
+      : # exists
+    else
+      ln -s _claude "$parent/.claude"
+      log "  [new] $parent/.claude -> _claude"
+      ((link_count++))
+    fi
+
+    # Ensure commands/ and memory/ exist
+    mkdir -p "$claude_dir/commands" "$claude_dir/memory"
+
+    # Memory symlink
+    local abs_parent
+    abs_parent="$(cd "$parent" && pwd)"
+    local encoded
+    encoded="$(echo "$abs_parent" | tr '/ ' '--')"
+    local mem_target="$HOME/.claude/projects/$encoded/memory"
+
+    if [ -L "$mem_target" ]; then
+      : # exists
+    elif [ -d "$mem_target" ]; then
+      cp -rn "$mem_target"/* "$claude_dir/memory/" 2>/dev/null || true
+      rm -rf "$mem_target"
+      ln -s "$claude_dir/memory" "$mem_target"
+      log "  [migrated] memory: $encoded"
+      ((mem_count++))
+    else
+      mkdir -p "$HOME/.claude/projects/$encoded"
+      ln -s "$claude_dir/memory" "$mem_target"
+      log "  [new] memory: $encoded"
+      ((mem_count++))
+    fi
+  done < <(find "$VAULT" -name "_claude" -type d -not -path "*/.obsidian/*" -print0 2>/dev/null)
+
+  echo "[claude-sync] Done. Converted $convert_count, created $link_count symlink(s), $mem_count memory link(s)."
+}
+
+# --- Main ---
+
+# If called as a Claude Code Stop hook, stdin is JSON — check for infinite loop
+if [ ! -t 0 ]; then
+  INPUT=$(cat)
+  if [ "$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null)" = "true" ]; then
+    exit 0
+  fi
+fi
+
+# Parse arguments
+case "${1:-}" in
+  init)
+    do_init
+    ;;
+  --help|-h)
+    usage
+    ;;
+  --version|-v)
+    echo "claude-sync $VERSION"
+    ;;
+  --vault)
+    if [ -z "${2:-}" ]; then
+      echo "Error: --vault requires a path argument." >&2
+      exit 1
+    fi
+    VAULT="${2}"
+    VAULT="${VAULT/#\~/$HOME}"
+    do_sync
+    ;;
+  "")
+    load_vault_path
+    do_sync
+    ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
