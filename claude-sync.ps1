@@ -1,5 +1,5 @@
 # claude-sync.ps1: Sync Claude Code config across devices via Obsidian
-# https://github.com/motapod/claude-code-obsidian-sync
+# https://github.com/maulmota/claude-code-obsidian-sync
 #
 # What it does:
 #   1. Converts any real .claude/ directories to _claude/ + symlink

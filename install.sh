@@ -1,11 +1,11 @@
 #!/bin/bash
 # install.sh: Install claude-sync for macOS/Linux
 # Can be run from a clone or piped from curl:
-#   curl -fsSL https://raw.githubusercontent.com/motapod/claude-code-obsidian-sync/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/maulmota/claude-code-obsidian-sync/main/install.sh | bash
 
 set -euo pipefail
 
-REPO="motapod/claude-code-obsidian-sync"
+REPO="maulmota/claude-code-obsidian-sync"
 INSTALL_DIR="$HOME/.local/bin"
 SCRIPT_NAME="claude-sync"
 

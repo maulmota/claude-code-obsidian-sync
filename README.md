@@ -51,7 +51,7 @@ vault/
 **Option A: Clone and install**
 
 ```bash
-git clone https://github.com/motapod/claude-code-obsidian-sync.git
+git clone https://github.com/maulmota/claude-code-obsidian-sync.git
 cd claude-code-obsidian-sync
 ./install.sh
 ```
@@ -59,7 +59,7 @@ cd claude-code-obsidian-sync
 **Option B: curl**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/motapod/claude-code-obsidian-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/maulmota/claude-code-obsidian-sync/main/install.sh | bash
 ```
 
 **Prerequisites:** `bash`, `jq` (for JSON operations — `brew install jq` on macOS, `apt install jq` on Linux)
