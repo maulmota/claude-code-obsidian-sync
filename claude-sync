@@ -7,6 +7,7 @@
 #   2. Creates .claude -> _claude symlinks for directories synced from other devices
 #   3. Ensures commands/ and memory/ subdirectories exist
 #   4. Sets up memory symlinks so auto-memory writes into the vault
+#   5. Syncs global commands, skills, and plugin config via _claude-global/
 
 set -euo pipefail
 
@@ -97,6 +98,15 @@ EOF
     install_stop_hook
   fi
 
+  # Offer to sync global commands, skills, and plugins
+  echo ""
+  read -r -p "Sync global commands, skills, and plugins across devices? [Y/n]: " sync_global
+  sync_global="${sync_global:-Y}"
+
+  if [[ "$sync_global" =~ ^[Yy] ]]; then
+    init_global_sync "$vault_path"
+  fi
+
   # Run first sync
   echo ""
   echo "Running initial sync..."
@@ -143,6 +153,130 @@ install_stop_hook() {
   echo "Stop hook installed in $settings_file"
 }
 
+init_global_sync() {
+  local vault_path="$1"
+  local global_dir="$vault_path/_claude-global"
+
+  if [ -d "$global_dir" ]; then
+    # New device: _claude-global/ already exists from Obsidian Sync
+    echo "Found existing _claude-global/ — linking to it."
+
+    for dir_name in commands skills; do
+      local vault_dir="$global_dir/$dir_name"
+      local claude_dir="$HOME/.claude/$dir_name"
+
+      if [ ! -d "$vault_dir" ]; then
+        continue
+      fi
+
+      if [ -L "$claude_dir" ]; then
+        echo "  ~/.claude/$dir_name already linked."
+      elif [ -d "$claude_dir" ]; then
+        cp -rn "$claude_dir"/* "$vault_dir/" 2>/dev/null || true
+        rm -rf "$claude_dir"
+        ln -s "$vault_dir" "$claude_dir"
+        echo "  [migrated] ~/.claude/$dir_name -> vault"
+      else
+        ln -s "$vault_dir" "$claude_dir"
+        echo "  [linked] ~/.claude/$dir_name -> vault"
+      fi
+    done
+
+    # Merge enabledPlugins from manifest into device settings
+    merge_plugins_to_device "$global_dir"
+  else
+    # First device: create _claude-global/ and move content
+    echo "Creating _claude-global/ in vault."
+    mkdir -p "$global_dir/commands" "$global_dir/skills"
+
+    for dir_name in commands skills; do
+      local vault_dir="$global_dir/$dir_name"
+      local claude_dir="$HOME/.claude/$dir_name"
+
+      if [ -L "$claude_dir" ]; then
+        echo "  ~/.claude/$dir_name already a symlink — skipping."
+      elif [ -d "$claude_dir" ]; then
+        # Move contents to vault
+        cp -rn "$claude_dir"/* "$vault_dir/" 2>/dev/null || true
+        rm -rf "$claude_dir"
+        ln -s "$vault_dir" "$claude_dir"
+        echo "  [moved] ~/.claude/$dir_name -> vault"
+      else
+        mkdir -p "$claude_dir"
+        rm -rf "$claude_dir"
+        ln -s "$vault_dir" "$claude_dir"
+        echo "  [linked] ~/.claude/$dir_name -> vault"
+      fi
+    done
+
+    # Generate initial plugins.json
+    update_plugins_manifest "$global_dir"
+    if [ -f "$global_dir/plugins.json" ]; then
+      echo "  [created] plugins.json"
+    fi
+  fi
+}
+
+merge_plugins_to_device() {
+  local global_dir="$1"
+  local manifest="$global_dir/plugins.json"
+  local settings_file="$HOME/.claude/settings.json"
+
+  if [ ! -f "$manifest" ]; then
+    return
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    echo "  Warning: jq not found — skipping plugin merge." >&2
+    return
+  fi
+
+  # Read enabledPlugins from manifest
+  local manifest_plugins
+  manifest_plugins=$(jq -r '.enabledPlugins // {}' "$manifest" 2>/dev/null) || return
+
+  if [ "$manifest_plugins" = "{}" ]; then
+    return
+  fi
+
+  # Merge into device settings
+  if [ -f "$settings_file" ]; then
+    local tmp
+    tmp=$(mktemp)
+    jq --argjson mp "$manifest_plugins" '
+      .enabledPlugins = ((.enabledPlugins // {}) + $mp)
+    ' "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
+  fi
+
+  # List plugins that need manual installation
+  local installed_file="$HOME/.claude/plugins/installed_plugins.json"
+  local installed_keys=""
+  if [ -f "$installed_file" ]; then
+    installed_keys=$(jq -r '.plugins | keys[]' "$installed_file" 2>/dev/null) || true
+  fi
+
+  local manifest_entries
+  manifest_entries=$(jq -r '.installedPlugins // {} | to_entries[] | "\(.key)|\(.value.version // "unknown")|\(.value.marketplace // "unknown")"' "$manifest" 2>/dev/null) || return
+
+  local need_install=()
+  while IFS='|' read -r plugin_name version marketplace; do
+    if ! echo "$installed_keys" | grep -qF "$plugin_name"; then
+      need_install+=("$plugin_name ($marketplace v$version)")
+    fi
+  done <<< "$manifest_entries"
+
+  if [ ${#need_install[@]} -gt 0 ]; then
+    echo ""
+    echo "Plugins to install manually:"
+    for p in "${need_install[@]}"; do
+      echo "  - $p"
+    done
+  fi
+
+  # Also update the manifest with any local plugins
+  update_plugins_manifest "$global_dir"
+}
+
 # --- Sync logic ---
 
 do_sync() {
@@ -171,7 +305,7 @@ do_sync() {
     fi
     mkdir -p "$parent/_claude/commands" "$parent/_claude/memory"
     ((convert_count++))
-  done < <(find "$VAULT" -name ".claude" -type d -not -path "*/.obsidian/*" -print0 2>/dev/null)
+  done < <(find "$VAULT" -name ".claude" -type d -not -path "*/.obsidian/*" -not -path "*/_claude-global/*" -print0 2>/dev/null)
 
   # Step 2: Create .claude -> _claude symlinks and memory symlinks
   while IFS= read -r -d '' claude_dir; do
@@ -211,9 +345,111 @@ do_sync() {
       log "  [new] memory: $encoded"
       ((mem_count++))
     fi
-  done < <(find "$VAULT" -name "_claude" -type d -not -path "*/.obsidian/*" -print0 2>/dev/null)
+  done < <(find "$VAULT" -name "_claude" -type d -not -path "*/.obsidian/*" -not -path "*/_claude-global/*" -print0 2>/dev/null)
+
+  # Step 3: Sync global commands, skills, and plugin config
+  do_global_sync
 
   echo "[claude-sync] Done. Converted $convert_count, created $link_count symlink(s), $mem_count memory link(s)."
+}
+
+# --- Global sync ---
+
+do_global_sync() {
+  local global_dir="$VAULT/_claude-global"
+
+  # Only run if _claude-global/ exists in the vault
+  if [ ! -d "$global_dir" ]; then
+    return
+  fi
+
+  local global_count=0
+
+  # Sync commands/ and skills/ via symlinks
+  for dir_name in commands skills; do
+    local vault_dir="$global_dir/$dir_name"
+    local claude_dir="$HOME/.claude/$dir_name"
+
+    if [ ! -d "$vault_dir" ]; then
+      continue
+    fi
+
+    if [ -L "$claude_dir" ]; then
+      # Already a symlink — skip
+      :
+    elif [ -d "$claude_dir" ]; then
+      # Real directory — merge contents into vault, replace with symlink
+      cp -rn "$claude_dir"/* "$vault_dir/" 2>/dev/null || true
+      rm -rf "$claude_dir"
+      ln -s "$vault_dir" "$claude_dir"
+      log "  [migrated] ~/.claude/$dir_name -> vault"
+      ((global_count++))
+    else
+      # Doesn't exist — create symlink
+      ln -s "$vault_dir" "$claude_dir"
+      log "  [new] ~/.claude/$dir_name -> vault"
+      ((global_count++))
+    fi
+  done
+
+  # Update plugins.json manifest
+  update_plugins_manifest "$global_dir"
+
+  if [ "$global_count" -gt 0 ]; then
+    log "[claude-sync] Global: $global_count directory link(s) updated."
+  fi
+}
+
+update_plugins_manifest() {
+  local global_dir="$1"
+  local installed_file="$HOME/.claude/plugins/installed_plugins.json"
+  local settings_file="$HOME/.claude/settings.json"
+  local manifest="$global_dir/plugins.json"
+
+  if [ ! -f "$installed_file" ] || [ ! -f "$settings_file" ]; then
+    return
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    return
+  fi
+
+  # Build current device state
+  local device_manifest
+  device_manifest=$(jq -n \
+    --slurpfile installed "$installed_file" \
+    --slurpfile settings "$settings_file" '
+    {
+      enabledPlugins: ($settings[0].enabledPlugins // {}),
+      installedPlugins: (
+        ($installed[0].plugins // {}) | to_entries | map({
+          key: .key,
+          value: {
+            version: (.value[0].version // "unknown"),
+            marketplace: (.key | split("@") | if length > 1 then .[-1] else "unknown" end)
+          }
+        }) | from_entries
+      )
+    }
+  ' 2>/dev/null) || return
+
+  if [ -f "$manifest" ]; then
+    # Merge: add new entries, keep existing
+    local merged
+    merged=$(jq -n \
+      --argjson existing "$(cat "$manifest")" \
+      --argjson device "$device_manifest" '
+      {
+        enabledPlugins: ($existing.enabledPlugins + $device.enabledPlugins),
+        installedPlugins: ($existing.installedPlugins + $device.installedPlugins)
+      }
+    ' 2>/dev/null) || return
+    echo "$merged" > "$manifest"
+  else
+    echo "$device_manifest" > "$manifest"
+  fi
+
+  log "  [updated] plugins.json"
 }
 
 # --- Main ---

@@ -6,6 +6,7 @@
 #   2. Creates .claude -> _claude symlinks for directories synced from other devices
 #   3. Ensures commands/ and memory/ subdirectories exist
 #   4. Sets up memory symlinks so auto-memory writes into the vault
+#   5. Syncs global commands, skills, and plugin config via _claude-global/
 #
 # Requires: Developer Mode enabled (Settings > System > For Developers)
 
@@ -111,6 +112,13 @@ VAULT_PATH="$vaultPath"
         Install-StopHook
     }
 
+    # Offer to sync global commands, skills, and plugins
+    Write-Host ""
+    $syncGlobal = Read-Host "Sync global commands, skills, and plugins across devices? [Y/n]"
+    if (-not $syncGlobal -or $syncGlobal -match "^[Yy]") {
+        Initialize-GlobalSync $vaultPath
+    }
+
     # Run first sync
     Write-Host ""
     Write-Host "Running initial sync..."
@@ -176,6 +184,249 @@ function Install-StopHook {
     Write-Host "Stop hook installed in $settingsFile"
 }
 
+function Initialize-GlobalSync {
+    param([string]$VaultRoot)
+
+    $globalDir = Join-Path $VaultRoot "_claude-global"
+
+    if (Test-Path $globalDir -PathType Container) {
+        # New device: _claude-global/ already exists from Obsidian Sync
+        Write-Host "Found existing _claude-global/ — linking to it."
+
+        foreach ($dirName in @("commands", "skills")) {
+            $vaultDir = Join-Path $globalDir $dirName
+            $claudeDir = Join-Path $HOME ".claude" $dirName
+
+            if (-not (Test-Path $vaultDir -PathType Container)) { continue }
+
+            if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                Write-Host "  ~/.claude/$dirName already linked."
+            } elseif (Test-Path $claudeDir -PathType Container) {
+                Get-ChildItem $claudeDir -Force | ForEach-Object {
+                    $dest = Join-Path $vaultDir $_.Name
+                    if (-not (Test-Path $dest)) {
+                        Copy-Item $_.FullName $dest -Recurse
+                    }
+                }
+                Remove-Item $claudeDir -Recurse -Force
+                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                Write-Host "  [migrated] ~/.claude/$dirName -> vault"
+            } else {
+                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                Write-Host "  [linked] ~/.claude/$dirName -> vault"
+            }
+        }
+
+        # Merge enabledPlugins from manifest into device settings
+        Merge-PluginsToDevice $globalDir
+    } else {
+        # First device: create _claude-global/ and move content
+        Write-Host "Creating _claude-global/ in vault."
+        New-Item -ItemType Directory -Path (Join-Path $globalDir "commands") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $globalDir "skills") -Force | Out-Null
+
+        foreach ($dirName in @("commands", "skills")) {
+            $vaultDir = Join-Path $globalDir $dirName
+            $claudeDir = Join-Path $HOME ".claude" $dirName
+
+            if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                Write-Host "  ~/.claude/$dirName already a symlink — skipping."
+            } elseif (Test-Path $claudeDir -PathType Container) {
+                Get-ChildItem $claudeDir -Force | ForEach-Object {
+                    $dest = Join-Path $vaultDir $_.Name
+                    if (-not (Test-Path $dest)) {
+                        Copy-Item $_.FullName $dest -Recurse
+                    }
+                }
+                Remove-Item $claudeDir -Recurse -Force
+                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                Write-Host "  [moved] ~/.claude/$dirName -> vault"
+            } else {
+                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                Write-Host "  [linked] ~/.claude/$dirName -> vault"
+            }
+        }
+
+        # Generate initial plugins.json
+        Update-PluginsManifest $globalDir
+        $manifestPath = Join-Path $globalDir "plugins.json"
+        if (Test-Path $manifestPath) {
+            Write-Host "  [created] plugins.json"
+        }
+    }
+}
+
+function Merge-PluginsToDevice {
+    param([string]$GlobalDir)
+
+    $manifestPath = Join-Path $GlobalDir "plugins.json"
+    $settingsFile = Join-Path $HOME ".claude" "settings.json"
+
+    if (-not (Test-Path $manifestPath)) { return }
+
+    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+
+    if (-not $manifest.enabledPlugins) { return }
+    $manifestPlugins = $manifest.enabledPlugins
+
+    # Merge into device settings
+    if (Test-Path $settingsFile) {
+        $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
+        if (-not $settings.enabledPlugins) {
+            $settings | Add-Member -NotePropertyName "enabledPlugins" -NotePropertyValue @{}
+        }
+        foreach ($prop in $manifestPlugins.PSObject.Properties) {
+            $settings.enabledPlugins | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+        }
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+    }
+
+    # List plugins that need manual installation
+    $installedFile = Join-Path $HOME ".claude" "plugins" "installed_plugins.json"
+    $installedKeys = @()
+    if (Test-Path $installedFile) {
+        $installed = Get-Content $installedFile -Raw | ConvertFrom-Json
+        if ($installed.plugins) {
+            $installedKeys = $installed.plugins.PSObject.Properties.Name
+        }
+    }
+
+    $needInstall = @()
+    if ($manifest.installedPlugins) {
+        foreach ($prop in $manifest.installedPlugins.PSObject.Properties) {
+            if ($prop.Name -notin $installedKeys) {
+                $version = if ($prop.Value.version) { $prop.Value.version } else { "unknown" }
+                $marketplace = if ($prop.Value.marketplace) { $prop.Value.marketplace } else { "unknown" }
+                $needInstall += "$($prop.Name) ($marketplace v$version)"
+            }
+        }
+    }
+
+    if ($needInstall.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Plugins to install manually:"
+        foreach ($p in $needInstall) {
+            Write-Host "  - $p"
+        }
+    }
+
+    # Also update the manifest with any local plugins
+    Update-PluginsManifest $GlobalDir
+}
+
+function Update-PluginsManifest {
+    param([string]$GlobalDir)
+
+    $installedFile = Join-Path $HOME ".claude" "plugins" "installed_plugins.json"
+    $settingsFile = Join-Path $HOME ".claude" "settings.json"
+    $manifestPath = Join-Path $GlobalDir "plugins.json"
+
+    if (-not (Test-Path $installedFile) -or -not (Test-Path $settingsFile)) { return }
+
+    $installed = Get-Content $installedFile -Raw | ConvertFrom-Json
+    $settings = Get-Content $settingsFile -Raw | ConvertFrom-Json
+
+    # Build current device state
+    $deviceEnabled = if ($settings.enabledPlugins) { $settings.enabledPlugins } else { @{} }
+    $deviceInstalled = @{}
+
+    if ($installed.plugins) {
+        foreach ($prop in $installed.plugins.PSObject.Properties) {
+            $pluginName = $prop.Name
+            $version = if ($prop.Value[0].version) { $prop.Value[0].version } else { "unknown" }
+            $parts = $pluginName -split "@"
+            $marketplace = if ($parts.Count -gt 1) { $parts[-1] } else { "unknown" }
+            $deviceInstalled[$pluginName] = @{
+                version = $version
+                marketplace = $marketplace
+            }
+        }
+    }
+
+    if (Test-Path $manifestPath) {
+        # Merge: add new entries, keep existing
+        $existing = Get-Content $manifestPath -Raw | ConvertFrom-Json
+
+        # Merge enabledPlugins
+        $mergedEnabled = @{}
+        if ($existing.enabledPlugins) {
+            foreach ($prop in $existing.enabledPlugins.PSObject.Properties) {
+                $mergedEnabled[$prop.Name] = $prop.Value
+            }
+        }
+        if ($deviceEnabled -is [PSCustomObject]) {
+            foreach ($prop in $deviceEnabled.PSObject.Properties) {
+                $mergedEnabled[$prop.Name] = $prop.Value
+            }
+        }
+
+        # Merge installedPlugins
+        $mergedInstalled = @{}
+        if ($existing.installedPlugins) {
+            foreach ($prop in $existing.installedPlugins.PSObject.Properties) {
+                $mergedInstalled[$prop.Name] = $prop.Value
+            }
+        }
+        foreach ($key in $deviceInstalled.Keys) {
+            $mergedInstalled[$key] = [PSCustomObject]$deviceInstalled[$key]
+        }
+
+        @{
+            enabledPlugins = [PSCustomObject]$mergedEnabled
+            installedPlugins = [PSCustomObject]$mergedInstalled
+        } | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
+    } else {
+        @{
+            enabledPlugins = $deviceEnabled
+            installedPlugins = [PSCustomObject]$deviceInstalled
+        } | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
+    }
+
+    Write-Log "  [updated] plugins.json"
+}
+
+function Invoke-GlobalSync {
+    param([string]$VaultRoot)
+
+    $globalDir = Join-Path $VaultRoot "_claude-global"
+
+    if (-not (Test-Path $globalDir -PathType Container)) { return }
+
+    $globalCount = 0
+
+    foreach ($dirName in @("commands", "skills")) {
+        $vaultDir = Join-Path $globalDir $dirName
+        $claudeDir = Join-Path $HOME ".claude" $dirName
+
+        if (-not (Test-Path $vaultDir -PathType Container)) { continue }
+
+        if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+            # Already a symlink — skip
+        } elseif (Test-Path $claudeDir -PathType Container) {
+            Get-ChildItem $claudeDir -Force | ForEach-Object {
+                $dest = Join-Path $vaultDir $_.Name
+                if (-not (Test-Path $dest)) {
+                    Copy-Item $_.FullName $dest -Recurse
+                }
+            }
+            Remove-Item $claudeDir -Recurse -Force
+            New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+            Write-Log "  [migrated] ~/.claude/$dirName -> vault"
+            $globalCount++
+        } else {
+            New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+            Write-Log "  [new] ~/.claude/$dirName -> vault"
+            $globalCount++
+        }
+    }
+
+    Update-PluginsManifest $globalDir
+
+    if ($globalCount -gt 0) {
+        Write-Log "[claude-sync] Global: $globalCount directory link(s) updated."
+    }
+}
+
 # --- Sync logic ---
 
 function Invoke-Sync {
@@ -192,7 +443,7 @@ function Invoke-Sync {
 
     # Step 1: Convert any real .claude/ directories to _claude/ + symlink
     $dotClaudes = Get-ChildItem -Path $vaultPath -Recurse -Directory -Force -Filter ".claude" -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '[/\\]\.obsidian[/\\]' -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) }
+        Where-Object { $_.FullName -notmatch '[/\\]\.obsidian[/\\]' -and $_.FullName -notmatch '[/\\]_claude-global[/\\]' -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) }
 
     foreach ($dotClaude in $dotClaudes) {
         $parent = $dotClaude.Parent.FullName
@@ -223,7 +474,7 @@ function Invoke-Sync {
 
     # Step 2: Create .claude -> _claude symlinks and memory symlinks
     $underscoreClaudes = Get-ChildItem -Path $vaultPath -Recurse -Directory -Filter "_claude" -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '[/\\]\.obsidian[/\\]' }
+        Where-Object { $_.FullName -notmatch '[/\\]\.obsidian[/\\]' -and $_.FullName -notmatch '[/\\]_claude-global[/\\]' -and $_.Parent.Name -ne "_claude-global" }
 
     foreach ($claudeDir in $underscoreClaudes) {
         $parent = $claudeDir.Parent.FullName
@@ -271,6 +522,9 @@ function Invoke-Sync {
             $memCount++
         }
     }
+
+    # Step 3: Sync global commands, skills, and plugin config
+    Invoke-GlobalSync $vaultPath
 
     Write-Host "[claude-sync] Done. Converted $convertCount, created $linkCount symlink(s), $memCount memory link(s)."
 }
