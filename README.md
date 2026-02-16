@@ -73,9 +73,21 @@ curl -fsSL https://raw.githubusercontent.com/maulmota/claude-code-obsidian-sync/
 
 ### Windows
 
-1. Enable Developer Mode: **Settings > System > For Developers > Developer Mode ON** (required for symlinks)
-2. Save `claude-sync.ps1` somewhere on your PATH
-3. Run `claude-sync init`
+**Option A: Clone and install**
+
+```powershell
+git clone https://github.com/maulmota/claude-code-obsidian-sync.git
+cd claude-code-obsidian-sync
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+**Option B: Remote install**
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/maulmota/claude-code-obsidian-sync/main/install.ps1 | iex"
+```
+
+**Prerequisites:** Developer Mode enabled (for symlinks) — **Settings > System > For Developers > Developer Mode ON**
 
 ## Setup
 
