@@ -33,6 +33,20 @@ function Set-Utf8Content {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+function New-Symlink {
+    param([string]$Path, [string]$Target)
+    # New-Item -ItemType SymbolicLink requires admin on PS 5.1 even with
+    # Developer Mode enabled. cmd /c mklink respects Developer Mode.
+    if (Test-Path $Target -PathType Container) {
+        cmd /c mklink /d "`"$Path`"" "`"$Target`"" > $null 2>&1
+    } else {
+        cmd /c mklink "`"$Path`"" "`"$Target`"" > $null 2>&1
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create symlink: $Path -> $Target (is Developer Mode enabled?)"
+    }
+}
+
 function Show-Usage {
     Write-Host "claude-sync $script:VER --Sync Claude Code config across devices via Obsidian"
     Write-Host ""
@@ -211,10 +225,10 @@ function Initialize-GlobalSync {
                     }
                 }
                 Remove-Item $claudeDir -Recurse -Force
-                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                New-Symlink -Path $claudeDir -Target $vaultDir
                 Write-Host "  [migrated] ~/.claude/$dirName -> vault"
             } else {
-                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                New-Symlink -Path $claudeDir -Target $vaultDir
                 Write-Host "  [linked] ~/.claude/$dirName -> vault"
             }
         }
@@ -241,10 +255,10 @@ function Initialize-GlobalSync {
                     }
                 }
                 Remove-Item $claudeDir -Recurse -Force
-                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                New-Symlink -Path $claudeDir -Target $vaultDir
                 Write-Host "  [moved] ~/.claude/$dirName -> vault"
             } else {
-                New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+                New-Symlink -Path $claudeDir -Target $vaultDir
                 Write-Host "  [linked] ~/.claude/$dirName -> vault"
             }
         }
@@ -414,11 +428,11 @@ function Invoke-GlobalSync {
                 }
             }
             Remove-Item $claudeDir -Recurse -Force
-            New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+            New-Symlink -Path $claudeDir -Target $vaultDir
             Write-Log "  [migrated] ~/.claude/$dirName -> vault"
             $globalCount++
         } else {
-            New-Item -ItemType SymbolicLink -Path $claudeDir -Target $vaultDir | Out-Null
+            New-Symlink -Path $claudeDir -Target $vaultDir
             Write-Log "  [new] ~/.claude/$dirName -> vault"
             $globalCount++
         }
@@ -462,12 +476,12 @@ function Invoke-Sync {
                 }
             }
             Remove-Item $dotClaude.FullName -Recurse -Force
-            New-Item -ItemType SymbolicLink -Path (Join-Path $parent ".claude") -Target "_claude" | Out-Null
+            New-Symlink -Path (Join-Path $parent ".claude") -Target "_claude"
             Write-Log "  [merged] $parent/.claude -> _claude"
         } else {
             # Convert
             Move-Item $dotClaude.FullName $underscoreClaude
-            New-Item -ItemType SymbolicLink -Path (Join-Path $parent ".claude") -Target "_claude" | Out-Null
+            New-Symlink -Path (Join-Path $parent ".claude") -Target "_claude"
             Write-Log "  [converted] $parent/.claude -> _claude"
         }
 
@@ -486,7 +500,7 @@ function Invoke-Sync {
 
         # Config symlink
         if (-not (Test-Path $dotClaudeLink)) {
-            New-Item -ItemType SymbolicLink -Path $dotClaudeLink -Target "_claude" | Out-Null
+            New-Symlink -Path $dotClaudeLink -Target "_claude"
             Write-Log "  [new] $parent/.claude -> _claude"
             $linkCount++
         } elseif (-not (Get-Item $dotClaudeLink -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
@@ -514,14 +528,14 @@ function Invoke-Sync {
                 }
             }
             Remove-Item $memTarget -Recurse -Force
-            New-Item -ItemType SymbolicLink -Path $memTarget -Target (Join-Path $claudeDir.FullName "memory") | Out-Null
+            New-Symlink -Path $memTarget -Target (Join-Path $claudeDir.FullName "memory")
             Write-Log "  [migrated] memory: $encoded"
             $memCount++
         } else {
             # Create new memory symlink
             $projectDir = Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $encoded
             New-Item -ItemType Directory -Path $projectDir -Force | Out-Null
-            New-Item -ItemType SymbolicLink -Path $memTarget -Target (Join-Path $claudeDir.FullName "memory") | Out-Null
+            New-Symlink -Path $memTarget -Target (Join-Path $claudeDir.FullName "memory")
             Write-Log "  [new] memory: $encoded"
             $memCount++
         }
