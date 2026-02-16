@@ -1,0 +1,6 @@
+# Claude Code context files
+CLAUDE.md
+.claude/
+
+# OS files
+.DS_Store
