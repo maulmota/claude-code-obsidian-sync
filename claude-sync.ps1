@@ -22,7 +22,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $script:VERSION = "1.0.0"
-$script:CONFIG_DIR = Join-Path $HOME ".config" "claude-sync"
+$script:CONFIG_DIR = Join-Path (Join-Path $HOME ".config") "claude-sync"
 $script:CONFIG_FILE = Join-Path $script:CONFIG_DIR "config"
 
 # --- Helpers ---
@@ -127,7 +127,7 @@ VAULT_PATH="$vaultPath"
 }
 
 function Install-StopHook {
-    $settingsFile = Join-Path $HOME ".claude" "settings.json"
+    $settingsFile = Join-Path (Join-Path $HOME ".claude") "settings.json"
     $claudeDir = Join-Path $HOME ".claude"
 
     if (-not (Test-Path $claudeDir)) {
@@ -195,7 +195,7 @@ function Initialize-GlobalSync {
 
         foreach ($dirName in @("commands", "skills")) {
             $vaultDir = Join-Path $globalDir $dirName
-            $claudeDir = Join-Path $HOME ".claude" $dirName
+            $claudeDir = Join-Path (Join-Path $HOME ".claude") $dirName
 
             if (-not (Test-Path $vaultDir -PathType Container)) { continue }
 
@@ -227,7 +227,7 @@ function Initialize-GlobalSync {
 
         foreach ($dirName in @("commands", "skills")) {
             $vaultDir = Join-Path $globalDir $dirName
-            $claudeDir = Join-Path $HOME ".claude" $dirName
+            $claudeDir = Join-Path (Join-Path $HOME ".claude") $dirName
 
             if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
                 Write-Host "  ~/.claude/$dirName already a symlink — skipping."
@@ -260,7 +260,7 @@ function Merge-PluginsToDevice {
     param([string]$GlobalDir)
 
     $manifestPath = Join-Path $GlobalDir "plugins.json"
-    $settingsFile = Join-Path $HOME ".claude" "settings.json"
+    $settingsFile = Join-Path (Join-Path $HOME ".claude") "settings.json"
 
     if (-not (Test-Path $manifestPath)) { return }
 
@@ -282,7 +282,7 @@ function Merge-PluginsToDevice {
     }
 
     # List plugins that need manual installation
-    $installedFile = Join-Path $HOME ".claude" "plugins" "installed_plugins.json"
+    $installedFile = Join-Path (Join-Path (Join-Path $HOME ".claude") "plugins") "installed_plugins.json"
     $installedKeys = @()
     if (Test-Path $installedFile) {
         $installed = Get-Content $installedFile -Raw | ConvertFrom-Json
@@ -317,8 +317,8 @@ function Merge-PluginsToDevice {
 function Update-PluginsManifest {
     param([string]$GlobalDir)
 
-    $installedFile = Join-Path $HOME ".claude" "plugins" "installed_plugins.json"
-    $settingsFile = Join-Path $HOME ".claude" "settings.json"
+    $installedFile = Join-Path (Join-Path (Join-Path $HOME ".claude") "plugins") "installed_plugins.json"
+    $settingsFile = Join-Path (Join-Path $HOME ".claude") "settings.json"
     $manifestPath = Join-Path $GlobalDir "plugins.json"
 
     if (-not (Test-Path $installedFile) -or -not (Test-Path $settingsFile)) { return }
@@ -396,7 +396,7 @@ function Invoke-GlobalSync {
 
     foreach ($dirName in @("commands", "skills")) {
         $vaultDir = Join-Path $globalDir $dirName
-        $claudeDir = Join-Path $HOME ".claude" $dirName
+        $claudeDir = Join-Path (Join-Path $HOME ".claude") $dirName
 
         if (-not (Test-Path $vaultDir -PathType Container)) { continue }
 
@@ -496,7 +496,7 @@ function Invoke-Sync {
         # Memory symlink
         $absParent = (Resolve-Path $parent).Path
         $encoded = $absParent -replace '[/\\ ]', '-'
-        $memTarget = Join-Path $HOME ".claude" "projects" $encoded "memory"
+        $memTarget = Join-Path (Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $encoded) "memory"
 
         if ((Test-Path $memTarget) -and (Get-Item $memTarget -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
             # Already a symlink — skip
@@ -515,7 +515,7 @@ function Invoke-Sync {
             $memCount++
         } else {
             # Create new memory symlink
-            $projectDir = Join-Path $HOME ".claude" "projects" $encoded
+            $projectDir = Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $encoded
             New-Item -ItemType Directory -Path $projectDir -Force | Out-Null
             New-Item -ItemType SymbolicLink -Path $memTarget -Target (Join-Path $claudeDir.FullName "memory") | Out-Null
             Write-Log "  [new] memory: $encoded"

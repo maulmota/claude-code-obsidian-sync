@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 
 $Repo = "maulmota/claude-code-obsidian-sync"
-$InstallDir = Join-Path $HOME ".local" "bin"
+$InstallDir = Join-Path (Join-Path $HOME ".local") "bin"
 $ScriptName = "claude-sync.ps1"
 $CmdName = "claude-sync.cmd"
 
