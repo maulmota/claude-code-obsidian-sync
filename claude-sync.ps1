@@ -28,18 +28,16 @@ $script:CONFIG_FILE = Join-Path $script:CONFIG_DIR "config"
 # --- Helpers ---
 
 function Show-Usage {
-    Write-Host @"
-claude-sync $script:VERSION — Sync Claude Code config across devices via Obsidian
-
-Usage:
-  claude-sync              Sync vault (uses configured path)
-  claude-sync init         Interactive setup (vault path + Stop hook)
-  claude-sync -Vault PATH  Sync a specific vault path
-  claude-sync -Help        Show this help
-  claude-sync -Version     Show version
-
-Config: $script:CONFIG_FILE
-"@
+    Write-Host "claude-sync $script:VERSION — Sync Claude Code config across devices via Obsidian"
+    Write-Host ""
+    Write-Host "Usage:"
+    Write-Host "  claude-sync              Sync vault (uses configured path)"
+    Write-Host "  claude-sync init         Interactive setup (vault path + Stop hook)"
+    Write-Host "  claude-sync -Vault PATH  Sync a specific vault path"
+    Write-Host "  claude-sync -Help        Show this help"
+    Write-Host "  claude-sync -Version     Show version"
+    Write-Host ""
+    Write-Host "Config: $script:CONFIG_FILE"
 }
 
 function Get-IsInteractive {
@@ -99,10 +97,7 @@ function Invoke-Init {
 
     # Write config
     New-Item -ItemType Directory -Path $script:CONFIG_DIR -Force | Out-Null
-    @"
-# claude-sync configuration
-VAULT_PATH="$vaultPath"
-"@ | Set-Content $script:CONFIG_FILE -Encoding UTF8
+    @("# claude-sync configuration", "VAULT_PATH=`"$vaultPath`"") | Set-Content $script:CONFIG_FILE -Encoding UTF8
     Write-Host "Config saved to $($script:CONFIG_FILE)"
 
     # Offer to install Stop hook
