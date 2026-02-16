@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$script:VERSION = "1.0.0"
+$script:VER = "1.0.0"
 $script:CONFIG_DIR = Join-Path (Join-Path $HOME ".config") "claude-sync"
 $script:CONFIG_FILE = Join-Path $script:CONFIG_DIR "config"
 
@@ -34,7 +34,7 @@ function Set-Utf8Content {
 }
 
 function Show-Usage {
-    Write-Host "claude-sync $script:VERSION --Sync Claude Code config across devices via Obsidian"
+    Write-Host "claude-sync $script:VER --Sync Claude Code config across devices via Obsidian"
     Write-Host ""
     Write-Host "Usage:"
     Write-Host "  claude-sync              Sync vault (uses configured path)"
@@ -75,7 +75,7 @@ function Get-VaultPath {
 # --- Init subcommand ---
 
 function Invoke-Init {
-    Write-Host "claude-sync $script:VERSION --Setup"
+    Write-Host "claude-sync $script:VER --Setup"
     Write-Host ""
 
     # Determine default
@@ -557,7 +557,7 @@ if ($Help) {
 }
 
 if ($Version) {
-    Write-Host "claude-sync $script:VERSION"
+    Write-Host "claude-sync $script:VER"
     exit 0
 }
 
