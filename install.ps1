@@ -107,7 +107,7 @@ $runInit = Read-Host "Run 'claude-sync init' now? [Y/n]"
 if (-not $runInit -or $runInit -match "^[Yy]") {
     Write-Host ""
     $syncScript = Join-Path $InstallDir $ScriptName
-    & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $syncScript init
+    & $syncScript init
 }
 
 Write-Host ""
