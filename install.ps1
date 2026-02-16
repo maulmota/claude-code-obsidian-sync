@@ -22,7 +22,7 @@ if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir $ScriptName))) {
     $IsLocal = $true
     Write-Host "Installing from local clone..."
 } else {
-    # Running via irm | iex or $PSScriptRoot is empty — download both files
+    # Running via irm | iex or $PSScriptRoot is empty --download both files
     $IsLocal = $false
     Write-Host "Downloading claude-sync from GitHub..."
 

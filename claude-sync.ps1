@@ -34,7 +34,7 @@ function Set-Utf8Content {
 }
 
 function Show-Usage {
-    Write-Host "claude-sync $script:VERSION — Sync Claude Code config across devices via Obsidian"
+    Write-Host "claude-sync $script:VERSION --Sync Claude Code config across devices via Obsidian"
     Write-Host ""
     Write-Host "Usage:"
     Write-Host "  claude-sync              Sync vault (uses configured path)"
@@ -68,14 +68,14 @@ function Get-VaultPath {
         }
     }
 
-    Write-Error -Message "[claude-sync] Error: No vault path configured. Run 'claude-sync init' to set up, or use 'claude-sync -Vault PATH'."
+    Write-Error -Message "claude-sync: No vault path configured. Run 'claude-sync init' to set up, or use 'claude-sync -Vault PATH'."
     exit 1
 }
 
 # --- Init subcommand ---
 
 function Invoke-Init {
-    Write-Host "claude-sync $script:VERSION — Setup"
+    Write-Host "claude-sync $script:VERSION --Setup"
     Write-Host ""
 
     # Determine default
@@ -193,7 +193,7 @@ function Initialize-GlobalSync {
 
     if (Test-Path $globalDir -PathType Container) {
         # New device: _claude-global/ already exists from Obsidian Sync
-        Write-Host "Found existing _claude-global/ — linking to it."
+        Write-Host "Found existing _claude-global/ --linking to it."
 
         foreach ($dirName in @("commands", "skills")) {
             $vaultDir = Join-Path $globalDir $dirName
@@ -232,7 +232,7 @@ function Initialize-GlobalSync {
             $claudeDir = Join-Path (Join-Path $HOME ".claude") $dirName
 
             if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-                Write-Host "  ~/.claude/$dirName already a symlink — skipping."
+                Write-Host "  ~/.claude/$dirName already a symlink --skipping."
             } elseif (Test-Path $claudeDir -PathType Container) {
                 Get-ChildItem $claudeDir -Force | ForEach-Object {
                     $dest = Join-Path $vaultDir $_.Name
@@ -405,7 +405,7 @@ function Invoke-GlobalSync {
         if (-not (Test-Path $vaultDir -PathType Container)) { continue }
 
         if ((Test-Path $claudeDir) -and (Get-Item $claudeDir -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-            # Already a symlink — skip
+            # Already a symlink --skip
         } elseif (Test-Path $claudeDir -PathType Container) {
             Get-ChildItem $claudeDir -Force | ForEach-Object {
                 $dest = Join-Path $vaultDir $_.Name
@@ -437,7 +437,7 @@ function Invoke-Sync {
     $vaultPath = Get-VaultPath
 
     if (-not (Test-Path $vaultPath -PathType Container)) {
-        Write-Error -Message "[claude-sync] Error: $vaultPath is not a directory"
+        Write-Error -Message "claude-sync: $vaultPath is not a directory"
         exit 1
     }
 
@@ -490,7 +490,7 @@ function Invoke-Sync {
             Write-Log "  [new] $parent/.claude -> _claude"
             $linkCount++
         } elseif (-not (Get-Item $dotClaudeLink -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-            # It's a real directory, not a symlink — skip (handled in Step 1)
+            # It's a real directory, not a symlink --skip (handled in Step 1)
         }
 
         # Ensure commands/ and memory/ exist
@@ -503,7 +503,7 @@ function Invoke-Sync {
         $memTarget = Join-Path (Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $encoded) "memory"
 
         if ((Test-Path $memTarget) -and (Get-Item $memTarget -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-            # Already a symlink — skip
+            # Already a symlink --skip
         } elseif (Test-Path $memTarget -PathType Container) {
             # Migrate existing memory
             $memSource = Join-Path $claudeDir.FullName "memory"
