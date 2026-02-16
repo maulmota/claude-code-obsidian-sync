@@ -27,6 +27,12 @@ $script:CONFIG_FILE = Join-Path $script:CONFIG_DIR "config"
 
 # --- Helpers ---
 
+function Set-Utf8Content {
+    param([string]$Path, [string]$Content)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
 function Show-Usage {
     Write-Host "claude-sync $script:VERSION — Sync Claude Code config across devices via Obsidian"
     Write-Host ""
@@ -97,7 +103,7 @@ function Invoke-Init {
 
     # Write config
     New-Item -ItemType Directory -Path $script:CONFIG_DIR -Force | Out-Null
-    @("# claude-sync configuration", "VAULT_PATH=`"$vaultPath`"") | Set-Content $script:CONFIG_FILE -Encoding UTF8
+    Set-Utf8Content -Path $script:CONFIG_FILE -Content ("# claude-sync configuration`r`nVAULT_PATH=`"$vaultPath`"")
     Write-Host "Config saved to $($script:CONFIG_FILE)"
 
     # Offer to install Stop hook
@@ -167,13 +173,14 @@ function Install-StopHook {
             $settings.hooks.Stop += $hookEntry
         }
 
-        $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+        Set-Utf8Content -Path $settingsFile -Content ($settings | ConvertTo-Json -Depth 10)
     } else {
-        @{
+        $newSettings = @{
             hooks = @{
                 Stop = @($hookEntry)
             }
-        } | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+        }
+        Set-Utf8Content -Path $settingsFile -Content ($newSettings | ConvertTo-Json -Depth 10)
     }
 
     Write-Host "Stop hook installed in $settingsFile"
@@ -273,7 +280,7 @@ function Merge-PluginsToDevice {
         foreach ($prop in $manifestPlugins.PSObject.Properties) {
             $settings.enabledPlugins | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
         }
-        $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+        Set-Utf8Content -Path $settingsFile -Content ($settings | ConvertTo-Json -Depth 10)
     }
 
     # List plugins that need manual installation
@@ -366,15 +373,17 @@ function Update-PluginsManifest {
             $mergedInstalled[$key] = [PSCustomObject]$deviceInstalled[$key]
         }
 
-        @{
+        $manifest = @{
             enabledPlugins = [PSCustomObject]$mergedEnabled
             installedPlugins = [PSCustomObject]$mergedInstalled
-        } | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
+        }
+        Set-Utf8Content -Path $manifestPath -Content ($manifest | ConvertTo-Json -Depth 10)
     } else {
-        @{
+        $manifest = @{
             enabledPlugins = $deviceEnabled
             installedPlugins = [PSCustomObject]$deviceInstalled
-        } | ConvertTo-Json -Depth 10 | Set-Content $manifestPath -Encoding UTF8
+        }
+        Set-Utf8Content -Path $manifestPath -Content ($manifest | ConvertTo-Json -Depth 10)
     }
 
     Write-Log "  [updated] plugins.json"
