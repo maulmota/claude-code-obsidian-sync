@@ -513,7 +513,7 @@ function Invoke-Sync {
 
         # Memory symlink
         $absParent = (Resolve-Path $parent).Path
-        $encoded = $absParent -replace '[/\\ ]', '-'
+        $encoded = $absParent -replace '[/\\: ]', '-'
         $memTarget = Join-Path (Join-Path (Join-Path (Join-Path $HOME ".claude") "projects") $encoded) "memory"
 
         if ((Test-Path $memTarget) -and (Get-Item $memTarget -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
