@@ -68,7 +68,7 @@ function Get-VaultPath {
         }
     }
 
-    Write-Error "[claude-sync] Error: No vault path configured. Run 'claude-sync init' to set up, or use 'claude-sync -Vault PATH'."
+    Write-Error -Message "[claude-sync] Error: No vault path configured. Run 'claude-sync init' to set up, or use 'claude-sync -Vault PATH'."
     exit 1
 }
 
@@ -437,7 +437,7 @@ function Invoke-Sync {
     $vaultPath = Get-VaultPath
 
     if (-not (Test-Path $vaultPath -PathType Container)) {
-        Write-Error "[claude-sync] Error: $vaultPath is not a directory"
+        Write-Error -Message "[claude-sync] Error: $vaultPath is not a directory"
         exit 1
     }
 
